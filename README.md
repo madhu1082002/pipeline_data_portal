@@ -1,6 +1,6 @@
 # Pipeline Data Portal
 
-A data entry application for managing pipeline metadata in the **same Databricks database** used by [DataOps Copilot](../dataops-copilot/).
+A data entry application for managing pipeline metadata in the **same Databricks database** used by DataOps Copilot.
 
 Changes made here are written directly to `workspace.dataops_copilot` tables and appear in DataOps Copilot when you refresh its dashboard.
 
