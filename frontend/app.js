@@ -1,7 +1,23 @@
 const API = "";
+const THEME_KEY = "dataops-theme";
+
+function initThemeToggle() {
+  const btn = document.getElementById("theme-toggle");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    localStorage.setItem(THEME_KEY, next);
+  });
+}
 
 let currentTab = "pipelines";
 let editContext = null;
+let confirmCallback = null;
+let cachedPipelines = [];
+let cachedFailures = [];
+let cachedClusters = [];
+let searchTerms = { pipelines: "", failures: "", clusters: "" };
 
 const PIPELINE_FIELDS = [
   { name: "pipeline_name", label: "Pipeline Name", required: true },
@@ -41,11 +57,49 @@ const CLUSTER_FIELDS = [
   { name: "recommendation", label: "Recommendation", type: "textarea" },
 ];
 
+const EMPTY_ICONS = {
+  pipelines: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>`,
+  failures: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`,
+  clusters: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>`,
+};
+
+const PIPELINE_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>`;
+
 function showToast(message, type = "success") {
   const el = document.getElementById("toast");
   el.textContent = message;
   el.className = `toast ${type}`;
   setTimeout(() => el.classList.add("hidden"), 3000);
+}
+
+function showConfirm(title, body, onConfirm) {
+  document.getElementById("confirm-title").textContent = title;
+  document.getElementById("confirm-body").innerHTML = body;
+  confirmCallback = onConfirm;
+  document.getElementById("confirm-modal").classList.remove("hidden");
+}
+
+function closeConfirm() {
+  document.getElementById("confirm-modal").classList.add("hidden");
+  confirmCallback = null;
+}
+
+function showSkeleton(wrap) {
+  wrap.innerHTML = `
+    <table>
+      <tbody>
+        ${Array(4).fill(`<tr><td colspan="6"><div class="skeleton skeleton-row"></div></td></tr>`).join("")}
+      </tbody>
+    </table>`;
+}
+
+function renderEmpty(wrap, type, title, desc) {
+  wrap.innerHTML = `
+    <div class="empty-state">
+      <div class="empty-icon">${EMPTY_ICONS[type]}</div>
+      <h3>${title}</h3>
+      <p>${desc}</p>
+    </div>`;
 }
 
 async function api(path, options = {}) {
@@ -71,6 +125,26 @@ function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str ?? "";
   return div.innerHTML;
+}
+
+function formatDate(iso) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return String(iso);
+  }
+}
+
+function cpuBar(pct) {
+  if (pct == null) return "—";
+  const w = Math.min(100, Math.max(0, pct));
+  return `
+    <div class="cpu-bar-wrap">
+      <div class="cpu-bar"><div class="cpu-bar-fill" style="width:${w}%"></div></div>
+      <span>${w}%</span>
+    </div>`;
 }
 
 function parseListField(value) {
@@ -111,44 +185,82 @@ function displayValue(val) {
   return String(val);
 }
 
+function updateTabCounts(pipelines, failures, clusters) {
+  document.getElementById("count-pipelines").textContent = pipelines.length;
+  document.getElementById("count-failures").textContent = failures.length;
+  document.getElementById("count-clusters").textContent = clusters.length;
+}
+
 async function checkDbStatus() {
   const badge = document.getElementById("db-status");
   try {
     const status = await api("/databricks/status");
     if (status.connected) {
-      badge.textContent = `✓ ${status.catalog}.${status.schema}`;
+      badge.innerHTML = `<span class="dot"></span> ${status.catalog}.${status.schema}`;
       badge.className = "status-badge connected";
     } else {
-      badge.textContent = `✗ ${status.message}`;
+      badge.innerHTML = `<span class="dot"></span> ${status.message}`;
       badge.className = "status-badge error";
     }
   } catch {
-    badge.textContent = "✗ Cannot reach API";
+    badge.innerHTML = `<span class="dot"></span> Cannot reach API`;
     badge.className = "status-badge error";
   }
 }
 
+function filterRows(rows, query, fields) {
+  const q = query.trim().toLowerCase();
+  if (!q) return rows;
+  return rows.filter((row) =>
+    fields
+      .map((field) => displayValue(row[field]))
+      .join(" ")
+      .toLowerCase()
+      .includes(q)
+  );
+}
+
 function renderPipelinesTable(pipelines) {
   const wrap = document.getElementById("pipelines-table");
+  const filtered = filterRows(pipelines, searchTerms.pipelines, [
+    "pipeline_name",
+    "status",
+    "run_time",
+    "cluster_id",
+    "error_message",
+  ]);
+
   if (!pipelines.length) {
-    wrap.innerHTML = '<div class="empty-state">No pipeline runs yet. Click "+ Add Pipeline" to create one.</div>';
+    renderEmpty(wrap, "pipelines", "No pipeline runs yet", 'Click "+ Add Pipeline" to create your first record. Data syncs to DataOps Copilot automatically.');
     return;
   }
+
+  if (!filtered.length) {
+    wrap.innerHTML = `<div class="empty-state compact"><p>No pipeline runs match your search.</p></div>`;
+    return;
+  }
+
   wrap.innerHTML = `
     <table>
       <thead>
         <tr>
-          <th>Pipeline</th><th>Status</th><th>Run Time</th><th>Duration</th><th>Cluster</th><th>Actions</th>
+          <th class="col-serial">S.No</th><th>Pipeline</th><th>Status</th><th>Run Time</th><th>Duration</th><th>Cluster</th><th>Actions</th>
         </tr>
       </thead>
       <tbody>
-        ${pipelines.map((p) => `
+        ${filtered.map((p, index) => `
           <tr>
-            <td><strong>${escapeHtml(p.pipeline_name)}</strong></td>
+            <td class="col-serial">${index + 1}</td>
+            <td>
+              <div class="pipeline-name">
+                <span class="icon">${PIPELINE_ICON}</span>
+                <strong>${escapeHtml(p.pipeline_name)}</strong>
+              </div>
+            </td>
             <td><span class="status-pill ${statusClass(p.status)}">${escapeHtml(p.status)}</span></td>
-            <td>${escapeHtml(displayValue(p.run_time))}</td>
+            <td class="cell-muted">${escapeHtml(formatDate(p.run_time))}</td>
             <td>${p.duration_minutes != null ? p.duration_minutes + " min" : "—"}</td>
-            <td>${escapeHtml(displayValue(p.cluster_id))}</td>
+            <td class="cell-muted">${escapeHtml(displayValue(p.cluster_id))}</td>
             <td class="actions">
               <button class="btn sm" data-edit-pipeline="${escapeHtml(p.pipeline_name)}">Edit</button>
               <button class="btn sm danger" data-delete-pipeline="${escapeHtml(p.pipeline_name)}">Delete</button>
@@ -161,23 +273,42 @@ function renderPipelinesTable(pipelines) {
 
 function renderFailuresTable(failures) {
   const wrap = document.getElementById("failures-table");
+  const filtered = filterRows(failures, searchTerms.failures, [
+    "pipeline_name",
+    "failure_time",
+    "root_cause",
+    "error_details",
+  ]);
+
   if (!failures.length) {
-    wrap.innerHTML = '<div class="empty-state">No failure logs yet.</div>';
+    renderEmpty(wrap, "failures", "No failure logs yet", 'Add failure records to help DataOps Copilot diagnose pipeline issues.');
     return;
   }
+
+  if (!filtered.length) {
+    wrap.innerHTML = `<div class="empty-state compact"><p>No failure logs match your search.</p></div>`;
+    return;
+  }
+
   wrap.innerHTML = `
     <table>
       <thead>
         <tr>
-          <th>Pipeline</th><th>Failure Time</th><th>Root Cause</th><th>Actions</th>
+          <th class="col-serial">S.No</th><th>Pipeline</th><th>Failure Time</th><th>Root Cause</th><th>Actions</th>
         </tr>
       </thead>
       <tbody>
-        ${failures.map((f) => `
+        ${filtered.map((f, index) => `
           <tr>
-            <td><strong>${escapeHtml(f.pipeline_name)}</strong></td>
-            <td>${escapeHtml(displayValue(f.failure_time))}</td>
-            <td>${escapeHtml(displayValue(f.root_cause))}</td>
+            <td class="col-serial">${index + 1}</td>
+            <td>
+              <div class="pipeline-name">
+                <span class="icon">${PIPELINE_ICON}</span>
+                <strong>${escapeHtml(f.pipeline_name)}</strong>
+              </div>
+            </td>
+            <td class="cell-muted">${escapeHtml(formatDate(f.failure_time))}</td>
+            <td class="cell-truncate" title="${escapeHtml(displayValue(f.root_cause))}">${escapeHtml(displayValue(f.root_cause))}</td>
             <td class="actions">
               <button class="btn sm" data-edit-failure='${JSON.stringify({ name: f.pipeline_name, time: f.failure_time })}'>Edit</button>
               <button class="btn sm danger" data-delete-failure='${JSON.stringify({ name: f.pipeline_name, time: f.failure_time })}'>Delete</button>
@@ -190,45 +321,73 @@ function renderFailuresTable(failures) {
 
 function renderClustersTable(clusters) {
   const wrap = document.getElementById("clusters-table");
+  const filtered = filterRows(clusters, searchTerms.clusters, [
+    "cluster_id",
+    "cluster_name",
+    "instance_type",
+    "recommended_type",
+    "recommendation",
+  ]);
+
   if (!clusters.length) {
-    wrap.innerHTML = '<div class="empty-state">No cluster metrics yet.</div>';
+    renderEmpty(wrap, "clusters", "No cluster metrics yet", 'Add cluster data to enable cost optimization insights in DataOps Copilot.');
     return;
   }
+
+  if (!filtered.length) {
+    wrap.innerHTML = `<div class="empty-state compact"><p>No clusters match your search.</p></div>`;
+    return;
+  }
+
   wrap.innerHTML = `
     <table>
       <thead>
         <tr>
-          <th>Cluster</th><th>Instance</th><th>Avg CPU</th><th>Cost (₹)</th><th>Savings (₹)</th><th>Actions</th>
+          <th class="col-serial">S.No</th><th>Cluster</th><th>Instance</th><th>Avg CPU</th><th>Cost (₹)</th><th>Savings (₹)</th><th>Actions</th>
         </tr>
       </thead>
       <tbody>
-        ${clusters.map((c) => `
+        ${filtered.map((c, index) => {
+          const savings = c.estimated_savings_inr;
+          const savingsClass = savings > 0 ? "savings-positive" : "savings-zero";
+          return `
           <tr>
-            <td><strong>${escapeHtml(c.cluster_name || c.cluster_id)}</strong></td>
-            <td>${escapeHtml(displayValue(c.instance_type))}</td>
-            <td>${c.avg_cpu_usage != null ? c.avg_cpu_usage + "%" : "—"}</td>
-            <td>${c.monthly_cost_inr != null ? "₹" + c.monthly_cost_inr : "—"}</td>
-            <td>${c.estimated_savings_inr != null ? "₹" + c.estimated_savings_inr : "—"}</td>
+            <td class="col-serial">${index + 1}</td>
+            <td>
+              <div class="pipeline-name">
+                <span class="icon">${EMPTY_ICONS.clusters}</span>
+                <strong>${escapeHtml(c.cluster_name || c.cluster_id)}</strong>
+              </div>
+            </td>
+            <td class="cell-muted">${escapeHtml(displayValue(c.instance_type))}</td>
+            <td>${cpuBar(c.avg_cpu_usage)}</td>
+            <td>${c.monthly_cost_inr != null ? "₹" + c.monthly_cost_inr.toLocaleString() : "—"}</td>
+            <td class="${savingsClass}">${savings != null ? "₹" + savings.toLocaleString() : "—"}</td>
             <td class="actions">
               <button class="btn sm" data-edit-cluster="${escapeHtml(c.cluster_id)}">Edit</button>
               <button class="btn sm danger" data-delete-cluster="${escapeHtml(c.cluster_id)}">Delete</button>
             </td>
-          </tr>
-        `).join("")}
+          </tr>`;
+        }).join("")}
       </tbody>
     </table>`;
 }
 
 async function loadData() {
+  ["pipelines-table", "failures-table", "clusters-table"].forEach((id) => showSkeleton(document.getElementById(id)));
   try {
     const [pipelines, failures, clusters] = await Promise.all([
       api("/pipelines"),
       api("/failures"),
       api("/clusters"),
     ]);
-    renderPipelinesTable(pipelines.pipelines);
-    renderFailuresTable(failures.failures);
-    renderClustersTable(clusters.clusters);
+    cachedPipelines = pipelines.pipelines;
+    cachedFailures = failures.failures;
+    cachedClusters = clusters.clusters;
+    updateTabCounts(cachedPipelines, cachedFailures, cachedClusters);
+    renderPipelinesTable(cachedPipelines);
+    renderFailuresTable(cachedFailures);
+    renderClustersTable(cachedClusters);
   } catch (err) {
     showToast(err.message, "error");
   }
@@ -320,6 +479,23 @@ async function handleFormSubmit(e) {
   }
 }
 
+function setupSearch() {
+  const bindings = [
+    ["search-pipelines", "pipelines", renderPipelinesTable, () => cachedPipelines],
+    ["search-failures", "failures", renderFailuresTable, () => cachedFailures],
+    ["search-clusters", "clusters", renderClustersTable, () => cachedClusters],
+  ];
+
+  bindings.forEach(([id, key, renderFn, getData]) => {
+    const input = document.getElementById(id);
+    if (!input) return;
+    input.addEventListener("input", () => {
+      searchTerms[key] = input.value;
+      renderFn(getData());
+    });
+  });
+}
+
 function setupTabs() {
   document.querySelectorAll(".tab").forEach((tab) => {
     tab.addEventListener("click", () => {
@@ -345,6 +521,13 @@ function setupButtons() {
   document.getElementById("modal-cancel").addEventListener("click", closeModal);
   document.getElementById("modal-form").addEventListener("submit", handleFormSubmit);
 
+  document.getElementById("confirm-close").addEventListener("click", closeConfirm);
+  document.getElementById("confirm-cancel").addEventListener("click", closeConfirm);
+  document.getElementById("confirm-ok").addEventListener("click", async () => {
+    if (confirmCallback) await confirmCallback();
+    closeConfirm();
+  });
+
   document.body.addEventListener("click", async (e) => {
     const editPipeline = e.target.dataset.editPipeline;
     const deletePipeline = e.target.dataset.deletePipeline;
@@ -357,12 +540,18 @@ function setupButtons() {
       const data = (await api("/pipelines")).pipelines.find((p) => p.pipeline_name === editPipeline);
       openModal("Edit Pipeline Run", PIPELINE_FIELDS, data, { type: "pipelines", mode: "edit", key: editPipeline });
     }
-    if (deletePipeline && confirm(`Delete pipeline "${deletePipeline}"?`)) {
-      try {
-        await api(`/pipelines/${encodeURIComponent(deletePipeline)}`, { method: "DELETE" });
-        showToast("Pipeline deleted");
-        await loadData();
-      } catch (err) { showToast(err.message, "error"); }
+    if (deletePipeline) {
+      showConfirm(
+        "Delete Pipeline",
+        `Are you sure you want to delete <strong>${escapeHtml(deletePipeline)}</strong>? This action cannot be undone.`,
+        async () => {
+          try {
+            await api(`/pipelines/${encodeURIComponent(deletePipeline)}`, { method: "DELETE" });
+            showToast("Pipeline deleted");
+            await loadData();
+          } catch (err) { showToast(err.message, "error"); }
+        }
+      );
     }
     if (editFailure) {
       const key = JSON.parse(editFailure);
@@ -371,30 +560,42 @@ function setupButtons() {
     }
     if (deleteFailure) {
       const key = JSON.parse(deleteFailure);
-      if (confirm(`Delete failure log for "${key.name}"?`)) {
-        try {
-          await api(`/failures/${encodeURIComponent(key.name)}?failure_time=${encodeURIComponent(key.time)}`, { method: "DELETE" });
-          showToast("Failure log deleted");
-          await loadData();
-        } catch (err) { showToast(err.message, "error"); }
-      }
+      showConfirm(
+        "Delete Failure Log",
+        `Delete failure log for <strong>${escapeHtml(key.name)}</strong>?`,
+        async () => {
+          try {
+            await api(`/failures/${encodeURIComponent(key.name)}?failure_time=${encodeURIComponent(key.time)}`, { method: "DELETE" });
+            showToast("Failure log deleted");
+            await loadData();
+          } catch (err) { showToast(err.message, "error"); }
+        }
+      );
     }
     if (editCluster) {
       const data = (await api("/clusters")).clusters.find((c) => c.cluster_id === editCluster);
       openModal("Edit Cluster Metrics", CLUSTER_FIELDS, data, { type: "clusters", mode: "edit", key: editCluster });
     }
-    if (deleteCluster && confirm(`Delete cluster "${deleteCluster}"?`)) {
-      try {
-        await api(`/clusters/${encodeURIComponent(deleteCluster)}`, { method: "DELETE" });
-        showToast("Cluster deleted");
-        await loadData();
-      } catch (err) { showToast(err.message, "error"); }
+    if (deleteCluster) {
+      showConfirm(
+        "Delete Cluster",
+        `Delete cluster <strong>${escapeHtml(deleteCluster)}</strong> and all its metrics?`,
+        async () => {
+          try {
+            await api(`/clusters/${encodeURIComponent(deleteCluster)}`, { method: "DELETE" });
+            showToast("Cluster deleted");
+            await loadData();
+          } catch (err) { showToast(err.message, "error"); }
+        }
+      );
     }
   });
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
+  initThemeToggle();
   setupTabs();
+  setupSearch();
   setupButtons();
   await checkDbStatus();
   await loadData();

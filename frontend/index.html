@@ -3,7 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Manage pipeline data shared with DataOps Copilot" />
   <title>Pipeline Data Portal</title>
+  <script>
+    (function () {
+      var t = localStorage.getItem("dataops-theme");
+      if (!t) t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      document.documentElement.setAttribute("data-theme", t);
+    })();
+  </script>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>" />
   <link rel="stylesheet" href="styles.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -12,22 +21,42 @@
   <div class="app">
     <header class="header">
       <div class="header-brand">
-        <div class="logo">📊</div>
+        <div class="logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
+          </svg>
+        </div>
         <div>
           <h1>Pipeline Data Portal</h1>
           <p class="subtitle">Manage pipeline data shared with DataOps Copilot</p>
         </div>
       </div>
       <div class="header-actions">
-        <span class="status-badge" id="db-status">Checking database...</span>
-        <a href="http://localhost:5000" target="_blank" class="link-btn">Open DataOps Copilot ↗</a>
+        <span class="status-badge loading" id="db-status">
+          <span class="dot"></span>
+          Checking database...
+        </span>
+        <button class="theme-toggle" id="theme-toggle" title="Toggle light/dark theme" aria-label="Toggle theme">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+        <a href="http://localhost:5000" target="_blank" class="link-btn">
+          Open DataOps Copilot
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+          </svg>
+        </a>
       </div>
     </header>
 
     <nav class="tabs">
-      <button class="tab active" data-tab="pipelines">Pipeline Runs</button>
-      <button class="tab" data-tab="failures">Failure Logs</button>
-      <button class="tab" data-tab="clusters">Cluster Metrics</button>
+      <button class="tab active" data-tab="pipelines">Pipeline Runs <span class="count" id="count-pipelines">—</span></button>
+      <button class="tab" data-tab="failures">Failure Logs <span class="count" id="count-failures">—</span></button>
+      <button class="tab" data-tab="clusters">Cluster Metrics <span class="count" id="count-clusters">—</span></button>
     </nav>
 
     <main class="main">
@@ -35,6 +64,14 @@
         <div class="panel-header">
           <h2>Pipeline Runs</h2>
           <button class="btn primary" id="btn-add-pipeline">+ Add Pipeline</button>
+        </div>
+        <div class="list-toolbar">
+          <div class="search-box">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input type="search" id="search-pipelines" placeholder="Search pipeline runs..." autocomplete="off" />
+          </div>
         </div>
         <div class="table-wrap" id="pipelines-table"></div>
       </section>
@@ -44,6 +81,14 @@
           <h2>Failure Logs</h2>
           <button class="btn primary" id="btn-add-failure">+ Add Failure</button>
         </div>
+        <div class="list-toolbar">
+          <div class="search-box">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input type="search" id="search-failures" placeholder="Search failure logs..." autocomplete="off" />
+          </div>
+        </div>
         <div class="table-wrap" id="failures-table"></div>
       </section>
 
@@ -51,6 +96,14 @@
         <div class="panel-header">
           <h2>Cluster Metrics</h2>
           <button class="btn primary" id="btn-add-cluster">+ Add Cluster</button>
+        </div>
+        <div class="list-toolbar">
+          <div class="search-box">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input type="search" id="search-clusters" placeholder="Search cluster metrics..." autocomplete="off" />
+          </div>
         </div>
         <div class="table-wrap" id="clusters-table"></div>
       </section>
@@ -67,6 +120,20 @@
       <div class="modal-footer">
         <button type="button" class="btn" id="modal-cancel">Cancel</button>
         <button type="submit" form="modal-form" class="btn primary" id="modal-save">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal confirm-modal hidden" id="confirm-modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="confirm-title">Confirm Delete</h3>
+        <button class="close-btn" id="confirm-close">&times;</button>
+      </div>
+      <div class="confirm-body" id="confirm-body"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn" id="confirm-cancel">Cancel</button>
+        <button type="button" class="btn danger" id="confirm-ok">Delete</button>
       </div>
     </div>
   </div>
