@@ -49,6 +49,16 @@ py app.py
 
 After adding or editing data in the portal, refresh the DataOps Copilot dashboard at http://localhost:5000 to see the updated pipeline status, failures, and cluster metrics.
 
+## Run tests
+
+```powershell
+cd pipeline-portal
+py -m pip install -r requirements.txt
+pytest tests/ -v
+```
+
+GitHub Actions runs this suite on every push (`.github/workflows/ci.yml`).
+
 ## API Endpoints
 
 | Method | Endpoint | Description |
