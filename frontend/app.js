@@ -18,23 +18,24 @@ let cachedPipelines = [];
 let cachedFailures = [];
 let cachedClusters = [];
 let searchTerms = { pipelines: "", failures: "", clusters: "" };
+let pipelineStatusFilter = "all";
 
 const PIPELINE_FIELDS = [
   { name: "pipeline_name", label: "Pipeline Name", required: true },
   { name: "status", label: "Status", type: "select", options: ["success", "failed", "running", "partial_failure", "unknown"], required: true },
-  { name: "run_time", label: "Run Time", placeholder: "2026-07-08T03:00:00Z" },
+  { name: "run_time", label: "Run Time", type: "datetime-local" },
   { name: "duration_minutes", label: "Duration (minutes)", type: "number" },
   { name: "error_message", label: "Error Message", type: "textarea" },
   { name: "cluster_id", label: "Cluster ID" },
   { name: "cpu_usage", label: "CPU Usage (%)", type: "number" },
   { name: "memory_usage", label: "Memory Usage (%)", type: "number" },
   { name: "dependencies", label: "Dependencies (comma-separated)", placeholder: "api_gateway, raw_storage" },
-  { name: "last_success", label: "Last Success", placeholder: "2026-07-07T02:10:00Z" },
+  { name: "last_success", label: "Last Success", type: "datetime-local" },
 ];
 
 const FAILURE_FIELDS = [
   { name: "pipeline_name", label: "Pipeline Name", required: true },
-  { name: "failure_time", label: "Failure Time", placeholder: "2026-07-08T01:30:00Z" },
+  { name: "failure_time", label: "Failure Time", type: "datetime-local" },
   { name: "root_cause", label: "Root Cause" },
   { name: "error_details", label: "Error Details", type: "textarea" },
   { name: "cluster_logs", label: "Cluster Logs", type: "textarea" },
@@ -65,11 +66,15 @@ const EMPTY_ICONS = {
 
 const PIPELINE_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>`;
 
+let toastTimer;
 function showToast(message, type = "success") {
   const el = document.getElementById("toast");
-  el.textContent = message;
+  const title = type === "error" ? "Could not save" : "Saved";
+  el.innerHTML = `<strong class="toast-title">${title}</strong><span class="toast-body"></span>`;
+  el.querySelector(".toast-body").textContent = message;
   el.className = `toast ${type}`;
-  setTimeout(() => el.classList.add("hidden"), 3000);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.add("hidden"), 3000);
 }
 
 function showConfirm(title, body, onConfirm) {
@@ -129,12 +134,13 @@ function escapeHtml(str) {
 
 function formatDate(iso) {
   if (!iso) return "—";
-  try {
-    const d = new Date(iso);
-    return d.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" });
-  } catch {
-    return String(iso);
-  }
+  const match = String(iso).match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  if (!match) return String(iso);
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const hour = Number(match[4]);
+  const suffix = hour < 12 ? "AM" : "PM";
+  const hour12 = hour % 12 || 12;
+  return `${Number(match[3])} ${months[Number(match[2]) - 1]} ${match[1]}, ${hour12}:${match[5]} ${suffix}`;
 }
 
 function cpuBar(pct) {
@@ -157,6 +163,21 @@ function parseJsonField(value, fallback) {
   try { return JSON.parse(value); } catch { return fallback; }
 }
 
+function toDatetimeLocal(value) {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+}
+
+function fromDatetimeLocal(value) {
+  if (!value) return null;
+  const match = String(value).match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::(\d{2}))?$/);
+  if (!match) return value;
+  return `${match[1]} ${match[2]}:${match[3] || "00"}`;
+}
+
 function serializeRow(fields, row) {
   const out = {};
   for (const f of fields) {
@@ -169,6 +190,8 @@ function serializeRow(fields, row) {
       if (Array.isArray(val)) out[f.name] = val;
       else if (typeof val === "string" && val.includes("\n")) out[f.name] = val.split("\n").map((s) => s.trim()).filter(Boolean);
       else out[f.name] = parseListField(val);
+    } else if (f.type === "datetime-local") {
+      out[f.name] = fromDatetimeLocal(val);
     } else if (f.type === "number" && val !== "" && val != null) {
       out[f.name] = Number(val);
     } else {
@@ -220,9 +243,19 @@ function filterRows(rows, query, fields) {
   );
 }
 
+function copilotAskUrl(name, status) {
+  const question = status === "failed" || status === "partial_failure"
+    ? `Why did ${name} fail?`
+    : `What is the status of ${String(name).replace(/_/g, " ")}?`;
+  return `${window.location.protocol}//${window.location.hostname}:5000/?q=${encodeURIComponent(question)}`;
+}
+
 function renderPipelinesTable(pipelines) {
   const wrap = document.getElementById("pipelines-table");
-  const filtered = filterRows(pipelines, searchTerms.pipelines, [
+  const byStatus = pipelineStatusFilter === "all"
+    ? pipelines
+    : pipelines.filter((row) => String(row.status || "").toLowerCase() === pipelineStatusFilter);
+  const filtered = filterRows(byStatus, searchTerms.pipelines, [
     "pipeline_name",
     "status",
     "run_time",
@@ -236,7 +269,7 @@ function renderPipelinesTable(pipelines) {
   }
 
   if (!filtered.length) {
-    wrap.innerHTML = `<div class="empty-state compact"><p>No pipeline runs match your search.</p></div>`;
+    wrap.innerHTML = `<div class="empty-state compact"><p>No pipeline runs match this filter.</p></div>`;
     return;
   }
 
@@ -262,6 +295,7 @@ function renderPipelinesTable(pipelines) {
             <td>${p.duration_minutes != null ? p.duration_minutes + " min" : "—"}</td>
             <td class="cell-muted">${escapeHtml(displayValue(p.cluster_id))}</td>
             <td class="actions">
+              <a class="btn sm" href="${copilotAskUrl(p.pipeline_name, p.status)}" target="_blank" rel="noopener">Ask</a>
               <button class="btn sm" data-edit-pipeline="${escapeHtml(p.pipeline_name)}">Edit</button>
               <button class="btn sm danger" data-delete-pipeline="${escapeHtml(p.pipeline_name)}">Delete</button>
             </td>
@@ -397,7 +431,9 @@ function buildForm(fields, data = {}) {
   const form = document.getElementById("modal-form");
   form.innerHTML = fields.map((f) => {
     let value = data[f.name];
-    if (f.name === "dependencies" || f.name === "jobs_running") {
+    if (f.type === "datetime-local") {
+      value = toDatetimeLocal(value);
+    } else if (f.name === "dependencies" || f.name === "jobs_running") {
       value = Array.isArray(value) ? value.join(", ") : (value || "");
     } else if (f.name === "dependency_status") {
       value = typeof value === "object" && value ? JSON.stringify(value) : (value || "");
@@ -492,6 +528,18 @@ function setupSearch() {
     input.addEventListener("input", () => {
       searchTerms[key] = input.value;
       renderFn(getData());
+    });
+  });
+
+  document.querySelectorAll("#pipeline-status-filters .filter-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      pipelineStatusFilter = btn.dataset.status || "all";
+      document.querySelectorAll("#pipeline-status-filters .filter-chip").forEach((chip) => {
+        const on = chip === btn;
+        chip.classList.toggle("active", on);
+        chip.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+      renderPipelinesTable(cachedPipelines);
     });
   });
 }

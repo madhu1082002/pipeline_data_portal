@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import time
 
 import requests
@@ -32,6 +33,41 @@ def _rows_to_dicts(result: dict) -> list[dict]:
     columns = [c["name"] for c in result.get("manifest", {}).get("schema", {}).get("columns", [])]
     rows = result.get("result", {}).get("data_array", [])
     return [dict(zip(columns, row)) for row in rows]
+
+
+_TIMESTAMP_RE = re.compile(
+    r"^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$"
+)
+_TIMESTAMP_LABELS = {
+    "run_time": "Run Time",
+    "last_success": "Last Success",
+    "failure_time": "Failure Time",
+}
+
+
+def normalize_timestamp(value, label: str):
+    if value is None:
+        return None
+    text = str(value).strip()
+    if text == "" or text.lower() == "null":
+        return None
+    match = _TIMESTAMP_RE.match(text)
+    if not match:
+        raise ValueError(f"{label} must be a date and time, for example 2026-11-22 22:00:00")
+    year, month, day, hour, minute, second = match.groups()
+    month_n, day_n = int(month), int(day)
+    hour_n, minute_n, second_n = int(hour), int(minute), int(second or "00")
+    if not (1 <= month_n <= 12 and 1 <= day_n <= 31 and hour_n <= 23 and minute_n <= 59 and second_n <= 59):
+        raise ValueError(f"{label} must be a date and time, for example 2026-11-22 22:00:00")
+    return f"{year}-{month}-{day} {hour}:{minute}:{second or '00'}"
+
+
+def _normalize_timestamps(data: dict) -> dict:
+    cleaned = dict(data)
+    for field, label in _TIMESTAMP_LABELS.items():
+        if field in cleaned:
+            cleaned[field] = normalize_timestamp(cleaned.get(field), label)
+    return cleaned
 
 
 def sql_escape(value) -> str:
@@ -110,6 +146,7 @@ def list_clusters() -> list[dict]:
 
 
 def insert_pipeline(data: dict) -> None:
+    data = _normalize_timestamps(data)
     deps = json.dumps(data.get("dependencies") or [])
     sql = f"""
     INSERT INTO {_table('pipeline_runs')} VALUES (
@@ -129,6 +166,7 @@ def insert_pipeline(data: dict) -> None:
 
 
 def update_pipeline(pipeline_name: str, data: dict) -> None:
+    data = _normalize_timestamps(data)
     safe_name = pipeline_name.replace("'", "''")
     deps = json.dumps(data.get("dependencies") or [])
     sql = f"""
@@ -154,6 +192,7 @@ def delete_pipeline(pipeline_name: str) -> None:
 
 
 def insert_failure(data: dict) -> None:
+    data = _normalize_timestamps(data)
     dep_status = json.dumps(data.get("dependency_status") or {})
     actions = json.dumps(data.get("suggested_actions") or [])
     sql = f"""
@@ -171,6 +210,7 @@ def insert_failure(data: dict) -> None:
 
 
 def update_failure(pipeline_name: str, failure_time: str, data: dict) -> None:
+    data = _normalize_timestamps(data)
     safe_name = pipeline_name.replace("'", "''")
     safe_time = failure_time.replace("'", "''")
     dep_status = json.dumps(data.get("dependency_status") or {})

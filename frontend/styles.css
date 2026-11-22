@@ -238,7 +238,39 @@ h1 {
 }
 
 .list-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
   margin-bottom: 0.85rem;
+}
+
+.status-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.filter-chip {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.filter-chip:hover,
+.filter-chip.active {
+  color: white;
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.actions a.btn {
+  text-decoration: none;
 }
 
 .search-box {
@@ -582,6 +614,10 @@ tbody tr:hover td { background: var(--surface-hover); }
 
 .form-group textarea { min-height: 72px; resize: vertical; }
 
+[data-theme="dark"] .form-group input[type="datetime-local"] {
+  color-scheme: dark;
+}
+
 .modal-footer {
   display: flex;
   justify-content: flex-end;
@@ -608,16 +644,20 @@ tbody tr:hover td { background: var(--surface-hover); }
   position: fixed;
   bottom: 1.5rem;
   right: 1.5rem;
-  padding: 0.85rem 1.25rem;
+  padding: 0.85rem 1.1rem;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-size: 0.85rem;
+  line-height: 1.45;
   z-index: 200;
   box-shadow: var(--shadow-lg);
   animation: slideUp 0.3s ease;
-  max-width: 380px;
+  max-width: min(440px, calc(100vw - 2rem));
 }
+
+.toast-title { display: block; margin-bottom: 0.25rem; }
+.toast-body { display: block; color: var(--text-muted); overflow-wrap: anywhere; }
 
 @keyframes slideUp {
   from { opacity: 0; transform: translateY(12px); }

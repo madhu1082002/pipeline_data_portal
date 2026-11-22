@@ -66,6 +66,12 @@
           <button class="btn primary" id="btn-add-pipeline">+ Add Pipeline</button>
         </div>
         <div class="list-toolbar">
+          <div class="status-filters" id="pipeline-status-filters" role="group" aria-label="Filter by status">
+            <button type="button" class="filter-chip active" data-status="all" aria-pressed="true">All</button>
+            <button type="button" class="filter-chip" data-status="failed" aria-pressed="false">Failed</button>
+            <button type="button" class="filter-chip" data-status="running" aria-pressed="false">Running</button>
+            <button type="button" class="filter-chip" data-status="success" aria-pressed="false">Success</button>
+          </div>
           <div class="search-box">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>

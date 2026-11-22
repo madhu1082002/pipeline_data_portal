@@ -12,8 +12,28 @@ app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
 CORS(app, origins=CORS_ORIGINS.split(",") if CORS_ORIGINS != "*" else "*")
 
 
+def readable_db_error(exc: Exception) -> str:
+    if isinstance(exc, ValueError):
+        return str(exc)
+    text = str(exc)
+    lower = text.lower()
+    if "timed out" in lower or "timeout" in lower:
+        return "Databricks took too long to answer. Wait a few seconds and try again."
+    if "failed to establish" in lower or "name or service not known" in lower or "connection" in lower:
+        return "Could not reach Databricks. Check that the warehouse is running, then try again."
+    if "cast_invalid_input" in lower or "cannot be cast to" in lower:
+        return "A date field is not a real date. Choose Run Time, Last Success, or Failure Time from the date picker."
+    if "unauthorized" in lower or "invalid access token" in lower or "permission_denied" in lower:
+        return "Databricks rejected the login. The access token may have expired."
+    summary = text.split("SQLSTATE")[0].split("==")[0].strip()
+    if len(summary) > 220:
+        summary = summary[:217].rstrip() + "..."
+    return summary or "The save did not finish. Please try again."
+
+
 def _db_error_response(exc: Exception):
-    return jsonify({"error": str(exc)}), 503
+    status = 400 if isinstance(exc, ValueError) else 503
+    return jsonify({"error": readable_db_error(exc)}), status
 
 
 @app.route("/")
